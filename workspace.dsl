@@ -1,81 +1,105 @@
-workspace "Мессенджер" "Описание архитектуры мессенджера" {
-    model {
-        user = person "Пользователь" "Зарегистрированный пользователь мессенджера"
-        
-        notificationService = softwareSystem "Сервис уведомлений" "Внешний сервис для отправки push/email" {
-            tags "external"
-        }
-        
-        messenger = softwareSystem "Мессенджер" "Система обмена сообщениями" {
-            webApp = container "Веб-приложение" "React-приложение, интерфейс пользователя" "React"
-            apiServer = container "API-сервер" "Обрабатывает HTTP-запросы, бизнес-логика" "Node.js + Express"
-            wsServer = container "WebSocket-сервер" "Обеспечивает real-time доставку сообщений" "Socket.io"
-            database = container "База данных" "Хранит данные о пользователях, чатах, сообщениях" "PostgreSQL"
-            searchService = container "Поисковый сервис" "Индексирует пользователей для поиска по имени/фамилии" "Elasticsearch"
-        }
-        
-        webApp -> apiServer "Вызывает API (создание пользователя, поиск, создание чата)" "HTTPS/REST"
-        webApp -> wsServer "Устанавливает WebSocket-соединение для получения/отправки сообщений" "WebSocket"
-        apiServer -> database "Читает/записывает данные" "JDBC"
-        apiServer -> searchService "Выполняет поиск пользователей" "HTTP/REST"
-        wsServer -> database "Проверяет права доступа и сохраняет сообщения (опционально)" "JDBC"
-        wsServer -> notificationService "Вызывает внешний сервис для уведомлений (если адресат офлайн)" "HTTPS/REST"
-        apiServer -> notificationService "Отправляет уведомления (например, о новом сообщении)" "HTTPS/REST"
-        user -> webApp "Использует"
-        user -> wsServer "Использует (через WebSocket)"
-    }
-    
-    views {
-        themes default 
+workspace "Messenger System" "Мессенджер" {
 
-        systemcontext messenger "SystemContext" "Диаграмма контекста системы" {
-            include user
-            include notificationService
+    model {
+        user = person "Пользователь" "Отправляет сообщения, создает чаты и общается" "Person"
+        admin = person "Администратор" "Управляет системой" "Person"
+
+        pushSystem = softwareSystem "Push Notification Service" "Отправка push-уведомлений" "External"
+        emailSystem = softwareSystem "Email Service" "Отправка email уведомлений" "External"
+
+        messenger = softwareSystem "Messenger System" {
+
+            gateway = container "API Gateway" "REST + WebSocket: маршрутизация, auth, realtime соединения" "Nginx + WebSocket" "Container"
+
+            userService = container "User Service" "Регистрация, поиск пользователей" "C++/Userver" "Container"
+            chatService = container "Chat Service" "Управление чатами (групповые и PtP)" "C++/Userver" "Container"
+            messageService = container "Message Service" "Отправка и получение сообщений" "C++/Userver" "Container"
+            notificationService = container "Notification Service" "Генерация уведомлений" "C++/Userver" "Container"
+
+            userDb = container "User Database" "Хранение пользователей" "PostgreSQL" "Database"
+            chatDb = container "Chat Database" "Хранение чатов" "PostgreSQL" "Database"
+            messageDb = container "Message Database" "Хранение сообщений" "PostgreSQL" "Database"
+
+            cache = container "Cache" "Кэш сообщений и пользователей" "Redis" "Database"
+
+            broker = container "Message Broker" "Очередь сообщений" "Kafka/RabbitMQ" "Broker"
+        }
+
+        user -> gateway "REST API (регистрация, чаты, сообщения)" "HTTPS/JSON"
+        user -> gateway "Realtime сообщения" "WebSocket (WSS)"
+
+        admin -> gateway "Администрирование" "HTTPS/JSON"
+
+        gateway -> userService "REST запросы" "HTTP/JSON"
+        gateway -> chatService "REST запросы" "HTTP/JSON"
+        gateway -> messageService "REST запросы" "HTTP/JSON"
+
+        gateway -> messageService "Передача realtime сообщений" "WebSocket"
+
+        userService -> userDb "CRUD пользователей" "TCP/SQL"
+        userService -> cache "Кэш пользователей" "TCP"
+
+        chatService -> chatDb "CRUD чатов" "TCP/SQL"
+        chatService -> userService "Проверка пользователей" "HTTP/JSON"
+        chatService -> cache "Кэш чатов" "TCP"
+
+        messageService -> messageDb "Сохранение сообщений" "TCP/SQL"
+        messageService -> chatService "Проверка чата" "HTTP/JSON"
+        messageService -> broker "Публикация событий" "TCP"
+        messageService -> cache "Кэш сообщений" "TCP"
+
+        broker -> notificationService "События новых сообщений" "TCP"
+
+        notificationService -> pushSystem "Push уведомления" "HTTPS"
+        notificationService -> emailSystem "Email уведомления" "SMTP"
+    }
+
+    views {
+        systemContext messenger "SystemContext" {
+            include *
             autolayout lr
         }
-        
-        container messenger "Container" "Диаграмма контейнеров" {
-            include user
-            include webApp
-            include apiServer
-            include wsServer
-            include database
-            include searchService
-            include notificationService
+
+        container messenger "ContainerView" {
+            include *
             autolayout lr
         }
-        
-        dynamic messenger "SendPersonalMessage" "Диаграмма динамики для сценария отправки сообщения между пользователями" {
+
+        dynamic messenger "SendMessageUseCase" {
+            
+            user -> gateway "Отправка сообщения (WebSocket)"
+            gateway -> messageService "Передача сообщения"
+            messageService -> chatService "Проверка чата"
+            chatService -> userService "Проверка участников чата"
+            messageService -> messageDb "Сохранение сообщения"
+            messageService -> cache "Обновление кэша сообщений"
+            messageService -> broker "Публикация события"
+            broker -> notificationService "Новое сообщение"
+            notificationService -> pushSystem "Push уведомление"
+            notificationService -> emailSystem "Email уведомление"
+            messageService -> gateway "ACK сообщение доставлено"
+            gateway -> user "Сообщение доставлено"
             autolayout lr
-            user -> webApp "Пишет сообщение и нажимает отправить"
-            webApp -> apiServer "POST /api/messages (сохранить сообщение)"
-            apiServer -> database "INSERT INTO ptp_messages"
-            apiServer -> webApp "Ответ: сообщение сохранено"
-        
-            webApp -> wsServer "Передаёт сообщение для доставки получателю"
-            wsServer -> database "Проверяет статус получателя (онлайн/офлайн)"
-            wsServer -> user "[Если онлайн] Отправляет сообщение через WebSocket"
-    
-            wsServer -> notificationService "[Если офлайн] Запрос на отправку push-уведомления"
-            notificationService -> wsServer "Уведомление отправлено"
-    
         }
 
         styles {
-            element "softwareSystem" {
+            element "Database" {
+                shape Cylinder
                 background #1168bd
                 color #ffffff
             }
-            element "person" {
-                shape person
-                background #08427b
+            element "Broker" {
+                shape Pipe
+                background #d35400
                 color #ffffff
             }
-            element "external" {
-                background #999999
-            }
-            element "container" {
+            element "Container" {
                 background #438dd5
+                color #ffffff
+            }
+            element "Person" {
+                shape Person
+                background #08427b
                 color #ffffff
             }
         }
