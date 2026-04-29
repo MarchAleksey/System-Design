@@ -304,8 +304,8 @@
 
 # 9. Результат работы в картинках
 
-![Context view](./images/structurizr-1-SystemContext.png)
+![Context view](./images/SystemContext.png)
 
-![Container view](./images/structurizr-1-ContainerView.png)
+![Container view](./images/ContainerView.png)
 
-![Dynamic View](./images/structurizr-1-SendMessageUseCase.png)
+![Dynamic View](./images/SendMessageUseCase.png)
